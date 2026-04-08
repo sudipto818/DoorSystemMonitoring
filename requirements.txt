@@ -1,1 +1,8 @@
+customtkinter>=5.2.0
+screeninfo>=0.8.1
+icalendar>=5.0.0
+recurring-ical-events>=3.0.0
+requests>=2.31.0
+python-dateutil>=2.8.0
+Pillow>=10.0.0
 
