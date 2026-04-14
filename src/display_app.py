@@ -7,8 +7,6 @@ Reads the current status from the SQLite database every
 1.5 seconds and renders it as a large, color-coded sign.
 Also provides a "Leave a Message" button for visitors.
 
-PREMIUM REDESIGN — clean typography, layered card layout,
-subtle animations, and refined colour palette.
 """
 
 import tkinter as tk
@@ -25,31 +23,15 @@ except ImportError:
     get_monitors = None  # graceful fallback
 
 # ── project ──
-from db_manager import init_db, read_status, add_visitor, visitor_count
+from db_manager import init_db, read_status, write_status, add_visitor, visitor_count, get_timetable
+import queue
+try:
+    from network_bridge import StatusServer, send_visitor_message
+except ImportError:
+    StatusServer = None
+    send_visitor_message = None
 
-
-# ═══════════════════════════════════════════════════════════════════════
-#  COLOUR THEMES — (bg_dark, bg_card, fg_primary, fg_muted, accent)
-# ═══════════════════════════════════════════════════════════════════════
-
-THEMES = {
-    "Available":                ("#064e3b", "#065f46", "#ecfdf5", "#6ee7b7", "#10b981"),
-    "Please Knock":             ("#78350f", "#92400e", "#fffbeb", "#fcd34d", "#f59e0b"),
-    "In a Meeting":             ("#7f1d1d", "#991b1b", "#fef2f2", "#fca5a5", "#ef4444"),
-    "In a Meeting (Outlook)":   ("#7f1d1d", "#991b1b", "#fef2f2", "#fca5a5", "#dc2626"),
-    "Do Not Disturb":           ("#581c87", "#6b21a8", "#faf5ff", "#d8b4fe", "#a855f7"),
-    "Do Not Disturb (Outlook)": ("#581c87", "#6b21a8", "#faf5ff", "#d8b4fe", "#9333ea"),
-    "Working remotely":         ("#1e3a5f", "#1e40af", "#eff6ff", "#93c5fd", "#3b82f6"),
-    "Back soon":                ("#164e63", "#155e75", "#ecfeff", "#67e8f9", "#06b6d4"),
-    "Out of office":            ("#1f2937", "#374151", "#f9fafb", "#d1d5db", "#9ca3af"),
-    "Busy":                     ("#7c2d12", "#9a3412", "#fff7ed", "#fdba74", "#f97316"),
-}
-DEFAULT_THEME = ("#0f172a", "#1e293b", "#f1f5f9", "#94a3b8", "#64748b")
-
-
-def theme_for(status_text: str):
-    base = status_text.split(" — ")[0].strip()
-    return THEMES.get(base, DEFAULT_THEME)
+from ui_constants import STATUS_ICONS, theme_for, blend
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -58,19 +40,6 @@ def theme_for(status_text: str):
 
 class DisplayApp:
     POLL_MS = 1500
-
-    STATUS_ICONS = {
-        "Available":                "✓",
-        "Please Knock":             "🚪",
-        "In a Meeting":             "📅",
-        "In a Meeting (Outlook)":   "📅",
-        "Do Not Disturb":           "⛔",
-        "Do Not Disturb (Outlook)": "⛔",
-        "Working remotely":         "🏠",
-        "Back soon":                "⏳",
-        "Out of office":            "🚶",
-        "Busy":                     "🔶",
-    }
 
     def __init__(self):
         init_db()
@@ -85,10 +54,23 @@ class DisplayApp:
         # ── build widgets ──
         self._build_ui()
 
-        # ── kick off the auto-update loop ──
+        # ── network server ──
+        self.network_queue = queue.Queue()
+        if StatusServer:
+            self.server = StatusServer(callback=self._on_network_status)
+            self.server.start()
+            self.local_ip = self.server.get_local_ip()
+            self.branding_label.config(text=f"Door Sign Status  •  v1.0  •  IP: {self.local_ip}")
+        else:
+            self.server = None
+            self.local_ip = "Unknown"
+
+        # ── state & loop ──
+        self._active_event = None
         self._last_status = None
         self._pulse_phase = 0
         self._poll()
+        self._check_network_queue()
 
     # ─────────────────── Monitor Detection ────────────────────
 
@@ -208,100 +190,188 @@ class DisplayApp:
         self.msg_btn.pack(side="left")
 
         # Branding
-        tk.Label(
+        self.branding_label = tk.Label(
             bottom, text="Door Sign Status  •  v1.0",
-            font=("Segoe UI", 10), bg="#0f172a", fg="#334155"
-        ).pack(side="right")
+            font=("Segoe UI", 10, "bold"), bg="#0f172a", fg="#94a3b8"
+        )
+        self.branding_label.pack(side="right")
+
+    # ─────────────────── Network Updates ────────────────────────
+
+    def _on_network_status(self, status, return_time, source):
+        """Called by network_bridge from a background thread."""
+        # Persist to local DB so the polling loop stays in sync
+        write_status(status, return_time=return_time, source=source)
+
+        display_status = f"{status} — back by {return_time}" if return_time else status
+        self.network_queue.put({
+            "current_status": display_status,
+            "return_time": return_time,
+            "source": source,
+            "last_updated": datetime.now().strftime("%I:%M %p")
+        })
+
+    def _check_network_queue(self):
+        """Periodically check for queued network updates."""
+        try:
+            latest = None
+            while True:
+                latest = self.network_queue.get_nowait()
+        except queue.Empty:
+            pass
+
+        if latest:
+            self._apply_row(latest)
+            
+        self.root.after(500, self._check_network_queue)
 
     # ──────────────────── Polling Loop ────────────────────────
 
     def _poll(self):
         try:
+            # 1. Check for Timetable Events first (Additive Layer)
+            active_event = self._get_active_timetable_event()
+            
+            # 2. Get the underlying manual/outlook status
             row = read_status()
-            status = row["current_status"]
-
-            # Update clock
-            now = datetime.now()
-            self.time_label.config(
-                text=now.strftime("%A, %B %d   •   %I:%M %p")
-            )
-
-            # Update theme + text only if status changed
-            if status != self._last_status:
-                self._last_status = status
-                bg_dark, bg_card, fg_primary, fg_muted, accent = theme_for(status)
-
-                # ── Apply colour scheme ──
-                self.outer.config(bg=bg_dark)
-                self.root.config(bg=bg_dark)
-
-                # Top bar
-                for w in [self.badge_label, self.time_label, self.visitor_badge]:
-                    w.config(bg=bg_dark)
-                self.badge_label.config(fg=fg_muted)
-                self.time_label.config(fg=fg_muted)
-                self.visitor_badge.config(fg=fg_muted)
-
-                # Card
-                self.card_outer.config(bg=self._blend(bg_card, "#000000", 0.3))
-                self.card.config(bg=bg_card)
-                self.accent_bar.config(bg=accent)
-
-                # Content
-                for w in self.card.winfo_children():
-                    if isinstance(w, tk.Frame) and w is not self.accent_bar:
-                        w.config(bg=bg_card)
-                        for child in w.winfo_children():
-                            if isinstance(child, (tk.Label, tk.Frame)):
-                                child.config(bg=bg_card)
-                            if isinstance(child, tk.Canvas):
-                                child.config(bg=bg_card)
-
-                self.icon_frame.config(bg=bg_card)
-                self.icon_canvas.config(bg=bg_card)
-                self.icon_canvas.itemconfig(self._dot, fill=accent)
-
-                # Base status (without return time suffix)
-                base = status.split(" — ")[0].strip()
-
-                self.status_label.config(bg=bg_card, fg=fg_primary, text=base)
-                self.sub_label.config(bg=bg_card, fg=fg_muted)
-                self.divider.config(bg=self._blend(fg_muted, bg_card, 0.6))
-                self.info_label.config(bg=bg_card, fg=fg_muted)
-
-                # Icon
-                icon = self.STATUS_ICONS.get(base, "📌")
-                self.sub_label.config(text=icon)
-
-                # Return time / updated info
-                if row["return_time"]:
-                    self.info_label.config(
-                        text=f"Expected Time Availability  •  {row['return_time']}"
-                    )
+            
+            # 3. Apply overrides if a timetable event is active
+            if active_event:
+                event_name = active_event["name"]
+                # Map theme based on keywords
+                lower_name = event_name.lower()
+                effective_status = "In a Meeting" # Default
+                
+                if "class" in lower_name:
+                    effective_status = "Do Not Disturb"
+                    status_display = f"In a Class: {event_name}"
+                elif "meeting" in lower_name:
+                    effective_status = "In a Meeting"
+                    status_display = event_name
+                elif "available" in lower_name or "free" in lower_name:
+                    effective_status = "Available"
+                    status_display = "Available"
                 else:
-                    updated = row.get("last_updated", "")
-                    self.info_label.config(text=f"Last updated  •  {updated}")
-
-                # Bottom bar
-                for w in self.outer.winfo_children():
-                    if isinstance(w, tk.Frame) and w is not self.card_outer:
-                        w.config(bg=bg_dark)
-                        for child in w.winfo_children():
-                            if isinstance(child, tk.Label):
-                                child.config(bg=bg_dark)
-                            if isinstance(child, tk.Button):
-                                child.config(bg=self._blend(bg_card, bg_dark, 0.5))
-
-            # Visitor badge update
-            vc = visitor_count()
-            self.visitor_badge.config(
-                text=f"📬 {vc} message{'s' if vc != 1 else ''}" if vc else ""
-            )
-
+                    status_display = event_name
+                
+                # Create a synthetic row for the UI
+                timetable_row = {
+                    "current_status": status_display,
+                    "return_time": active_event["end"],
+                    "source": "timetable",
+                    "theme_status": effective_status # used for theme lookup
+                }
+                self._apply_row(timetable_row)
+            else:
+                self._apply_row(row)
+                
         except Exception as exc:
             self.status_label.config(text=f"⚠ Error:\n{exc}")
 
         self.root.after(self.POLL_MS, self._poll)
+
+    def _get_active_timetable_event(self):
+        """Find the most recently started active event in the timetable for today."""
+        now_dt = datetime.now()
+        now_time = now_dt.strftime("%H:%M")
+        day_of_week = now_dt.strftime("%A").upper() # MONDAY, TUESDAY, etc.
+        
+        events = get_timetable(day=day_of_week)
+        active_events = []
+        for e in events:
+            # Simple HH:MM comparison
+            if e["start"] <= now_time < e["end"]:
+                active_events.append(e)
+        
+        if not active_events:
+            return None
+            
+        # Sort by start time (descending) to get the most recent one
+        active_events.sort(key=lambda x: x["start"], reverse=True)
+        return active_events[0]
+
+    def _apply_row(self, row):
+        status = row["current_status"]
+        theme_ref = row.get("theme_status", status) # use mapped status or actual status
+
+        # Update clock
+        now = datetime.now()
+        self.time_label.config(
+            text=now.strftime("%A, %B %d   •   %I:%M %p")
+        )
+
+        # Update theme + text only if status or event changed
+        if status != self._last_status:
+            self._last_status = status
+            bg_dark, bg_card, fg_primary, fg_muted, accent = theme_for(theme_ref)
+
+            # ── Apply colour scheme ──
+            self.outer.config(bg=bg_dark)
+            self.root.config(bg=bg_dark)
+
+            # Top bar and Bottom bar text
+            for w in [self.badge_label, self.time_label, self.visitor_badge]:
+                w.config(bg=bg_dark)
+            self.badge_label.config(fg=fg_muted)
+            self.time_label.config(fg=fg_muted)
+            self.visitor_badge.config(fg=fg_muted)
+            self.branding_label.config(fg=fg_muted)
+
+            # Card
+            self.card_outer.config(bg=self._blend(bg_card, "#000000", 0.3))
+            self.card.config(bg=bg_card)
+            self.accent_bar.config(bg=accent)
+
+            # Content
+            for w in self.card.winfo_children():
+                if isinstance(w, tk.Frame) and w is not self.accent_bar:
+                    w.config(bg=bg_card)
+                    for child in w.winfo_children():
+                        if isinstance(child, (tk.Label, tk.Frame)):
+                            child.config(bg=bg_card)
+                        if isinstance(child, tk.Canvas):
+                            child.config(bg=bg_card)
+
+            self.icon_frame.config(bg=bg_card)
+            self.icon_canvas.config(bg=bg_card)
+            self.icon_canvas.itemconfig(self._dot, fill=accent)
+
+            # Base status (without return time suffix)
+            base = status.split(" — ")[0].strip()
+
+            self.status_label.config(bg=bg_card, fg=fg_primary, text=base)
+            self.sub_label.config(bg=bg_card, fg=fg_muted)
+            self.divider.config(bg=self._blend(fg_muted, bg_card, 0.6))
+            self.info_label.config(bg=bg_card, fg=fg_muted)
+
+            # Icon
+            icon = STATUS_ICONS.get(base, "📌")
+            self.sub_label.config(text=icon)
+
+            # Return time / updated info
+            if row.get("return_time"):
+                self.info_label.config(
+                    text=f"Expected Time Availability  •  {row['return_time']}"
+                )
+            else:
+                updated = row.get("last_updated", "")
+                self.info_label.config(text=f"Last updated  •  {updated}")
+
+            # Bottom bar
+            for w in self.outer.winfo_children():
+                if isinstance(w, tk.Frame) and w is not self.card_outer:
+                    w.config(bg=bg_dark)
+                    for child in w.winfo_children():
+                        if isinstance(child, tk.Label):
+                            child.config(bg=bg_dark)
+                        if isinstance(child, tk.Button):
+                            child.config(bg=self._blend(bg_card, bg_dark, 0.5))
+
+        # Visitor badge update
+        vc = visitor_count()
+        self.visitor_badge.config(
+            text=f"📬 {vc} message{'s' if vc != 1 else ''}" if vc else ""
+        )
 
     # ──────────────── Visitor Popup ───────────────────────────
 
@@ -367,6 +437,17 @@ class DisplayApp:
                 feedback_lbl.config(text="Please fill in both fields.", fg="#ef4444")
                 return
             add_visitor(n, p)
+
+            # Forward visitor message to control PC over network
+            if send_visitor_message and self.server and self.server.last_client_ip:
+                import threading
+                control_ip = self.server.last_client_ip
+                threading.Thread(
+                    target=send_visitor_message,
+                    args=(control_ip, n, p),
+                    daemon=True
+                ).start()
+
             feedback_lbl.config(text="✓  Message saved — thank you!", fg="#10b981")
             name_entry.delete(0, "end")
             purpose_text.delete("1.0", "end")
