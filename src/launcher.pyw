@@ -21,14 +21,17 @@ else:
     # Running as .py script
     base_dir = os.path.dirname(os.path.abspath(__file__))
     display_path = os.path.join(base_dir, "display_app.py")
-    control_path = os.path.join(base_dir, "control_app.py")
+    control_path = os.path.join(base_dir, "control_app.exe")
+    # Fallback to .py if the executable isn't built yet
+    if not os.path.exists(control_path):
+        control_path = os.path.join(base_dir, "control_app.py")
 
 # Verify files exist before launching
 if not os.path.exists(display_path):
     import ctypes
     ctypes.windll.user32.MessageBoxW(
         0,
-        f"Cannot find:\n{display_path}\n\nMake sure all 3 .exe files are in the same folder.",
+        f"Cannot find:\n{display_path}\n\nMake sure all required files are in the same folder.",
         "Door Sign Launcher — Error",
         0x10  # MB_ICONERROR
     )
@@ -38,7 +41,7 @@ if not os.path.exists(control_path):
     import ctypes
     ctypes.windll.user32.MessageBoxW(
         0,
-        f"Cannot find:\n{control_path}\n\nMake sure all 3 .exe files are in the same folder.",
+        f"Cannot find:\n{control_path}\n\nMake sure control_app is available.",
         "Door Sign Launcher — Error",
         0x10
     )
@@ -58,12 +61,21 @@ if getattr(sys, 'frozen', False):
     )
 else:
     pythonw = sys.executable.replace("python.exe", "pythonw.exe")
+    # Display runs in python background
     subprocess.Popen(
         [pythonw, display_path],
         cwd=base_dir,
         creationflags=subprocess.CREATE_NO_WINDOW
     )
-    subprocess.Popen(
-        [sys.executable, control_path],
-        cwd=base_dir
-    )
+    
+    # Launch control panel natively if it's .exe, otherwise through python
+    if control_path.endswith(".exe"):
+        subprocess.Popen(
+            [control_path],
+            cwd=base_dir
+        )
+    else:
+        subprocess.Popen(
+            [sys.executable, control_path],
+            cwd=base_dir
+        )
