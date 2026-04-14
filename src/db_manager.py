@@ -73,6 +73,21 @@ def init_db():
         )
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS timetable (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            day_of_week TEXT    NOT NULL,  -- MONDAY, TUESDAY, etc.
+            event_name  TEXT    NOT NULL,
+            start_time  TEXT    NOT NULL,  -- HH:MM
+            end_time    TEXT    NOT NULL   -- HH:MM
+        )
+    """)
+
+    # --- Migration: Add day_of_week column if it doesn't exist ---
+    try:
+        cur.execute("ALTER TABLE timetable ADD COLUMN day_of_week TEXT DEFAULT 'ALL'")
+    except sqlite3.OperationalError: pass
+
     # Seed the status row if it doesn't exist yet
     cur.execute("SELECT COUNT(*) FROM status")
     if cur.fetchone()[0] == 0:
@@ -232,3 +247,40 @@ def visitor_count() -> int:
     c = conn.execute("SELECT COUNT(*) FROM visitors").fetchone()[0]
     conn.close()
     return c
+
+
+# ────────────────────────── Timetable Helpers ──────────────────────────
+
+def save_timetable(data_list: list[dict]):
+    """Overwrite the existing timetable with new data."""
+    conn = get_connection()
+    conn.execute("DELETE FROM timetable")
+    for item in data_list:
+        conn.execute(
+            "INSERT INTO timetable (day_of_week, event_name, start_time, end_time) VALUES (?, ?, ?, ?)",
+            (item["day"], item["name"], item["start"], item["end"])
+        )
+    conn.commit()
+    conn.close()
+
+
+def get_timetable(day: str = None) -> list[dict]:
+    """Return the daily timetable (optional filter by day)."""
+    conn = get_connection()
+    if day:
+        rows = conn.execute(
+            "SELECT day_of_week, event_name, start_time, end_time FROM timetable WHERE day_of_week = ? OR day_of_week = 'ALL'",
+            (day,)
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT day_of_week, event_name, start_time, end_time FROM timetable").fetchall()
+    conn.close()
+    return [{"day": r["day_of_week"], "name": r["event_name"], "start": r["start_time"], "end": r["end_time"]} for r in rows]
+
+
+def clear_timetable():
+    """Remove all events from the daily timetable."""
+    conn = get_connection()
+    conn.execute("DELETE FROM timetable")
+    conn.commit()
+    conn.close()
