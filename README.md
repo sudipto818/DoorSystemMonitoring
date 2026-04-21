@@ -28,8 +28,8 @@ The Control Panel features advanced voice recognition (via `faster-whisper`).
 - **Commands**: You can set statuses (e.g., "Set status to Busy until 4 PM") or schedule meetings.
 - **Meeting Creation**: When you say "Schedule a meeting for [duration]", the app:
     1. Generates a physical `.ics` calendar file in the project folder.
-    2. Automatically opens your **default Calendar App (e.g., Microsoft Outlook)**.
-    3. **Action Required**: Once Outlook pops up with the new event, you must paste the ics link in the space provided and then click **Save & Close** to finalize the meeting and sync it to your cloud calendar.
+    2. Open your **default Calendar App (e.g., Microsoft Outlook)** and then go to the calendar section, and there you must perform step 3.
+    3. **Action Required**: You must paste the ics link in the space provided and then click **Save & Close** to finalize the meeting and sync it to your cloud calendar.
 
 > [!NOTE]
 > **Voice Parser Accuracy**: The voice command system uses fuzzy matching to handle slight transcription errors. However, no voice-to-text system is 100% accurate. Recognition quality depends on your microphone and environment; further logic refinements can be made in `src/voice_command.py` to improve complex intent detection.
@@ -38,7 +38,8 @@ The Control Panel features advanced voice recognition (via `faster-whisper`).
 
 ## 🛠 Building the Executables (.exe)
 
-The project includes `.spec` files to package the Python scripts into standalone `.exe` files using **PyInstaller**.
+The project includes preconfigured spec files in build/ to package the Python scripts into standalone .exe files using PyInstaller.
+
 
 ### Prerequisites
 Install PyInstaller:
@@ -46,23 +47,61 @@ Install PyInstaller:
 pip install pyinstaller
 ```
 
-### Build Steps
-To build the apps, run the following commands from the **root directory** of the project:
+### Build Steps (Recommended)
+Run from the project root folder (DoorSystemMonitoring):
 
-1. **Build the Launcher**:
+1. Build the Launcher:
    ```powershell
-   pyinstaller .\build\"Door Sign Launcher.spec" --noconfirm
+   python -m PyInstaller ".\build\Door Sign Launcher.spec" --noconfirm --distpath .\dist --workpath .\build\build
    ```
 
-2. **Build the Control App**:
+2. Build the Control App:
    ```powershell
-   pyinstaller .\build\control_app.spec --noconfirm
+   python -m PyInstaller .\build\control_app.spec --noconfirm --distpath .\dist --workpath .\build\build
    ```
 
-3. **Build the Display App**:
+3. Build the Display App:
    ```powershell
-   pyinstaller .\build\display_app.spec --noconfirm
+   python -m PyInstaller .\build\display_app.spec --noconfirm --distpath .\dist --workpath .\build\build
    ```
+
+### Where build outputs are created
+- Final executables are created in dist/.
+- PyInstaller intermediate files are created in build/build/.
+- Example executable paths after build:
+  - dist/control_app.exe
+  - dist/display_app.exe
+  - dist/Door Sign Launcher.exe
+
+### Moving executables to another independent location
+You can move the built output outside this project folder, but move the full app output (not only a single `.exe`) to avoid missing runtime dependencies.
+
+Recommended:
+- Create a release folder outside the project (example: `D:\DoorSignRelease`).
+- Copy the required app output from `dist/` into that folder.
+- Keep each app's executable with its related files/folders if present.
+
+Important:
+- If only the `.exe` is moved and companion files are left behind, the app may fail to start.
+- Runtime files such as database/config/temporary files are created relative to where the app runs, so they will be created in the new location after moving.
+
+### How the spec files were created
+The spec files were generated from the Python entry scripts and then customized for this project layout.
+
+Original generation method (equivalent):
+- pyi-makespec src/control_app.py --name control_app --windowed
+- pyi-makespec src/display_app.py --name display_app --windowed
+- pyi-makespec src/launcher.pyw --name "Door Sign Launcher" --windowed
+
+Important note on output location:
+- Running `pyi-makespec` only creates `.spec` files; it does not create `.exe` files.
+- `.exe` output is decided when you run PyInstaller on the `.spec` file.
+- If you run from project root (`DoorSystemMonitoring`), output goes to `dist/`.
+- If you run from `build/`, output goes to `build/dist/`.
+- To avoid confusion, always pass explicit output paths:
+  - `--distpath .\\dist`
+  - `--workpath .\\build\\build`
+
 
 ---
 

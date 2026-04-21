@@ -173,12 +173,7 @@ class ControlAppUI:
             if intent["action"] == "set_status":
                 status_text = intent["status"]
                 ret_time = intent.get("return_time", "")
-                write_status(status_text, return_time=ret_time, source="manual")
-                self._send_network_update(status_text, ret_time, "manual")
-                msg = f'Set: "{intent["status"]}"'
-                if intent.get("return_time"):
-                    msg += f'  (back by {intent["return_time"]})'
-                self.after(0, self._voice_result, msg, raw_text, intent.get("return_time", ""))
+                self.after(0, self._apply_voice_status, status_text, ret_time, raw_text)
 
             elif intent["action"] == "create_meeting":
                 meeting = intent["meeting"]
@@ -206,6 +201,23 @@ class ControlAppUI:
 
         except Exception as e:
             self.after(0, self._voice_result, f"Error: {e}", None)
+
+    def _apply_voice_status(self, status_text: str, return_time: str, raw_text: str):
+        """Apply voice-driven status via common manual path to preserve warning prompts."""
+        applied = self._apply_status(status_text, return_time=return_time)
+
+        if applied:
+            msg = f'Set: "{status_text}"'
+            if return_time:
+                msg += f'  (back by {return_time})'
+            self._voice_result(msg, raw_text, return_time)
+            return
+
+        self._voice_result(
+            "Cancelled: Outlook meeting active, status not changed.",
+            raw_text,
+            "",
+        )
 
     def _voice_result(self, message: str, raw_text: str = None,
                       return_time: str = "", refresh_schedule: bool = False):
@@ -883,3 +895,14 @@ class ControlAppUI:
             self.ntfy_status_lbl.configure(text="✓ Saved", text_color="#10b981")
         else:
             self.ntfy_status_lbl.configure(text="Enter a code", text_color="#ef4444")
+
+    def _build_footer(self):
+        footer = ctk.CTkFrame(self.scroll, fg_color="transparent")
+        footer.pack(fill="x", padx=24, pady=(0, 18))
+
+        ctk.CTkLabel(
+            footer,
+            text="Credits: Sudipto Ghosh, Kushagra Singhal",
+            font=FONT_TINY,
+            text_color=FG_DIM,
+        ).pack(anchor="e")

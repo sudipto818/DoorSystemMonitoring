@@ -1,9 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
+
+
+ROOT = Path(SPECPATH).resolve().parent
+SRC = ROOT / 'src'
+
 
 a = Analysis(
-    ['control_app.py'],
-    pathex=[],
+    [str(SRC / 'control_app.py')],
+    pathex=[str(SRC)],
     binaries=[],
     datas=[],
     hiddenimports=['network_bridge', 'openpyxl'],
@@ -15,6 +21,8 @@ a = Analysis(
     optimize=0,
 )
 pyz = PYZ(a.pure)
+
+DIST = ROOT / 'dist'
 
 exe = EXE(
     pyz,
@@ -35,4 +43,15 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='control_app',
+    distpath=str(DIST),
 )

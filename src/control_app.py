@@ -76,6 +76,7 @@ class ControlApp(ctk.CTk, ControlAppUI):
         self._ics_meeting_active = False
         self._ics_status_text = "Not connected"
         self._last_known_source = "manual"  # Track source changes to manage UI synchronization
+        self._last_notified_visitor_id = 0
 
         # Voice command state
         self._recorder = AudioRecorder() if VOICE_AVAILABLE else None
@@ -113,11 +114,13 @@ class ControlApp(ctk.CTk, ControlAppUI):
         self._build_timetable_card()
         self._build_outlook_card()
         self._build_network_card()
+        self._build_footer()
 
         # Initial data
         self._refresh_current_status()
         self._tick()
         self._check_visitor_queue()
+        self._prime_ntfy_cursor()
 
         # Auto-connect if URL was previously saved
         saved_url = _load_ics_url()
@@ -172,7 +175,7 @@ class ControlApp(ctk.CTk, ControlAppUI):
                     icon="warning"
                 )
                 if not proceed:
-                    return
+                    return False
 
         write_status(status_text, return_time=return_time, source="manual")
         self._send_network_update(status_text, return_time, "manual")
@@ -180,6 +183,8 @@ class ControlApp(ctk.CTk, ControlAppUI):
 
         if self.location_var.get() == "outside":
             self.return_entry.delete(0, "end")
+
+        return True
 
     # ═══════════════ ICS CALENDAR THREAD ══════════════════════
 
@@ -207,6 +212,32 @@ class ControlApp(ctk.CTk, ControlAppUI):
             target=self._ics_worker, args=(url,), daemon=True
         )
         self._ics_thread.start()
+
+    def _create_ics_meeting(self, title: str = "Voice Scheduled Meeting",
+                            duration_minutes: int = 30,
+                            target_date=None):
+        """Create a meeting file and keep the ICS URL entry synced with saved config."""
+        meeting_file = create_ics_meeting(
+            title=title,
+            duration_minutes=duration_minutes,
+            target_date=target_date,
+        )
+
+        # Voice flow can run before user reconnects the ICS section; keep entry in sync.
+        saved_url = _load_ics_url().strip()
+        if ICS_AVAILABLE and saved_url and hasattr(self, "ics_url_entry"):
+            def _sync_ics_entry():
+                current_url = self.ics_url_entry.get().strip()
+                if not current_url:
+                    self.ics_url_entry.insert(0, saved_url)
+                    current_url = saved_url
+
+                if current_url and not self._ics_running:
+                    self._start_ics_thread(current_url)
+
+            self.after(0, _sync_ics_entry)
+
+        return meeting_file
 
     def _ics_worker(self, url: str):
         """Background thread: fetches and parses the ICS URL every 60s."""
@@ -336,6 +367,7 @@ class ControlApp(ctk.CTk, ControlAppUI):
     def _tick(self):
         self._refresh_current_status()
         self._refresh_visitors()
+        self._notify_new_visitors_from_db()
         self._refresh_schedule_ui()
         if ICS_AVAILABLE:
             self.ics_status_lbl.configure(text=self._ics_status_text)
@@ -357,12 +389,31 @@ class ControlApp(ctk.CTk, ControlAppUI):
                 from db_manager import add_visitor
                 add_visitor(msg["name"], msg["purpose"])
                 self._refresh_visitors()
-
-                # Send phone push notification
-                self._send_ntfy_notification(msg["name"], msg["purpose"])
         except q.Empty:
             pass
         self.after(2000, self._check_visitor_queue)
+
+    def _prime_ntfy_cursor(self):
+        """Initialize visitor-notification cursor so old records are not re-pushed."""
+        latest = get_visitors(limit=1)
+        self._last_notified_visitor_id = latest[0]["id"] if latest else 0
+
+    def _notify_new_visitors_from_db(self):
+        """Send ntfy for visitor rows added after startup, regardless of source path."""
+        rows = get_visitors(limit=50)
+        if not rows:
+            return
+
+        pending = [r for r in rows if r["id"] > self._last_notified_visitor_id]
+        if not pending:
+            return
+
+        # get_visitors() is newest first; send in chronological order.
+        pending.sort(key=lambda r: r["id"])
+        for row in pending:
+            self._send_ntfy_notification(row["name"], row["purpose"])
+
+        self._last_notified_visitor_id = pending[-1]["id"]
 
     def _save_ntfy_topic(self):
         topic = self.ntfy_topic_entry.get().strip()
@@ -385,21 +436,22 @@ class ControlApp(ctk.CTk, ControlAppUI):
         def _send():
             try:
                 import urllib.request
-                import json
-                
                 req = urllib.request.Request(f"https://ntfy.sh/{topic}", method="POST")
-                req.add_header("Title", f"Door Sign: {visitor_name}".encode('utf-8'))
+                req.add_header("Title", f"Door Sign: {visitor_name}")
                 req.add_header("Tags", "door")
                 req.add_header("Priority", "default")
-                
+                req.add_header("Content-Type", "text/plain; charset=utf-8")
+
                 body = f"Message: {message}".encode('utf-8')
-                urllib.request.urlopen(req, data=body, timeout=10)
-                
+                with urllib.request.urlopen(req, data=body, timeout=10) as resp:
+                    if resp.status >= 400:
+                        raise RuntimeError(f"HTTP {resp.status}")
+
                 self.after(0, lambda: self.ntfy_status_lbl.configure(
                     text="✓ Notified", text_color="#10b981"))
             except Exception as e:
                 self.after(0, lambda: self.ntfy_status_lbl.configure(
-                    text=f"⚠ Failed", text_color="#ef4444"))
+                    text=f"⚠ Failed: {e}", text_color="#ef4444"))
 
         threading.Thread(target=_send, daemon=True).start()
 

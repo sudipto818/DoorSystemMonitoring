@@ -240,6 +240,8 @@ class VoiceProcessor:
             meeting_phrases = [
                 "schedule a meeting", "schedule meeting", "schedule",
                 "create a meeting", "create meeting",
+                "create a meet", "create meet",
+                "schedule a meet", "schedule meet",
                 "new meeting", "set up a meeting", "book a meeting",
             ]
             for phrase in meeting_phrases:
