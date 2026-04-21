@@ -9,6 +9,7 @@ A professional dual-application system designed for managing and displaying offi
 ### Core Applications
 - **`src/control_app.py`**: The main entry point for the owner. It initializes the UI and background workers for network synchronization and Outlook calendar polling.
 - **`src/display_app.py`**: The entry point for the display hardware (e.g., a tablet or monitor). It runs in full-screen mode and receives real-time updates from the network or database.
+- For the display hardware, a budget Android tablet is sufficient; an **I Kall N11 Tablet** is a suitable low-cost option.
 - **`src/launcher.pyw`**: A lightweight GUI launcher that allows users to easily start either the Control Panel or the Display App without needing a terminal.
 
 ### Logic & Helpers
@@ -146,6 +147,25 @@ The system can automatically set your status to "In a Meeting" based on your Out
     -   Click **Publish**.
 6.  Copy the **ICS link** (it usually ends in `.ics`).
 7.  Paste this link into the **Outlook Calendar Sync** section in the Control Panel and click **Connect**.
+
+---
+
+## 📱 ntfy Push Notifications
+
+The Control Panel can send instant push notifications to your phone when a new visitor message is received.
+
+### Setup Steps
+1. Install the **ntfy** app on your phone (Android/iOS) from PlayStore, or use the web endpoint `https://ntfy.sh/<your-topic>`.
+2. Choose a private topic code (example: `my_door_123`) and subscribe to that same topic in the ntfy app.
+3. In the **Control Panel** under **Network Display**, enter the topic in **ntfy.sh topic code** and click **Save**.
+
+### How it Works in This App
+- The app stores your topic in `ntfy_topic.txt`.
+- Notifications are sent for new visitor rows added after startup (so old records are not re-notified).
+- Topic input is sanitized to letters, numbers, `_`, and `-`.
+
+### Security Note
+- `ntfy.sh` public topics can be guessed. Use a long, hard-to-guess topic code for better privacy.
 
 ---
 
