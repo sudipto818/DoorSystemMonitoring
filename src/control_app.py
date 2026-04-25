@@ -148,6 +148,24 @@ class ControlApp(ctk.CTk, ControlAppUI):
         
         threading.Thread(target=_send, daemon=True).start()
 
+    def _get_active_timetable_event(self):
+        """Return the currently active timetable event for today, if any."""
+        now_dt = datetime.now()
+        now_time = now_dt.strftime("%H:%M")
+        day_of_week = now_dt.strftime("%A").upper()
+
+        events = get_timetable(day=day_of_week)
+        active_events = []
+        for event in events:
+            if event["start"] <= now_time < event["end"]:
+                active_events.append(event)
+
+        if not active_events:
+            return None
+
+        active_events.sort(key=lambda item: item["start"], reverse=True)
+        return active_events[0]
+
     # ═══════════════ STATUS APPLICATION ═══════════════════════
 
     def _apply_status(self, status_text: str, return_time: str = ""):
@@ -165,6 +183,18 @@ class ControlApp(ctk.CTk, ControlAppUI):
         # that meeting time into the manual state unless they specifically typed a different one.
         if current["source"] == "outlook" and return_time == current.get("return_time"):
             return_time = ""
+
+        active_timetable_event = self._get_active_timetable_event()
+        if active_timetable_event:
+            proceed = messagebox.askyesno(
+                "Timetable Event Active",
+                f'The timetable is currently showing "{active_timetable_event["name"]}"\n'
+                f'({active_timetable_event["start"]} - {active_timetable_event["end"]}).\n\n'
+                f'Override with "{status_text}" anyway?',
+                icon="warning"
+            )
+            if not proceed:
+                return False
 
         if self._ics_meeting_active:
             if current["source"] == "outlook" and new_priority < current["priority"]:
