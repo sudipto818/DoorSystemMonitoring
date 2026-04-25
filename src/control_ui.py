@@ -214,7 +214,7 @@ class ControlAppUI:
             return
 
         self._voice_result(
-            "Cancelled: Outlook meeting active, status not changed.",
+            "Cancelled: active timetable or meeting state, status not changed.",
             raw_text,
             "",
         )
