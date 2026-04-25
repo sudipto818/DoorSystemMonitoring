@@ -49,22 +49,25 @@ pip install pyinstaller
 ```
 
 ### Build Steps (Recommended)
-Run from the project root folder (DoorSystemMonitoring):
 
-1. Build the Launcher:
-   ```powershell
-   python -m PyInstaller ".\build\Door Sign Launcher.spec" --noconfirm --distpath .\dist --workpath .\build\build
-   ```
+Run from the project root folder (`DoorSystemMonitoring`):
 
-2. Build the Control App:
-   ```powershell
-   python -m PyInstaller .\build\control_app.spec --noconfirm --distpath .\dist --workpath .\build\build
-   ```
+1. **Build the Control App:**
+    ```powershell
+    python -m PyInstaller .\build\control_app.spec --noconfirm --distpath .\dist --workpath .\build\build
+    ```
 
-3. Build the Display App:
-   ```powershell
-   python -m PyInstaller .\build\display_app.spec --noconfirm --distpath .\dist --workpath .\build\build
-   ```
+2. **Build the Display App:**
+    ```powershell
+    python -m PyInstaller .\build\display_app.spec --noconfirm --distpath .\dist --workpath .\build\build
+    ```
+
+3. **Build the Launcher (optional):**
+    ```powershell
+    python -m PyInstaller ".\build\Door Sign Launcher.spec" --noconfirm --distpath .\dist --workpath .\build\build
+    ```
+
+You can individually create the `control_app.exe` and `display_app.exe`, which is useful when running the applications on different systems.
 
 ### Where build outputs are created
 - Final executables are created in dist/.
